@@ -2,13 +2,21 @@
 
 Temporary no-reboot mitigation for Copy Fail / CVE-2026-31431.
 
-This project installs a small BPF LSM program that denies `AF_ALG` binds where
+**Why this exists.** The goal was to reduce exposure without scheduling disruptive
+reboots across many hosts *or* building and maintaining livepatch / kpatch
+modules for each exact kernel revision in the fleet. A small BPF LSM guard can
+be deployed quickly and rolled back cleanly; it is an **interim control** until
+official vendor kernels, vendor livepatches, or other supported fixes are
+available for your platforms.
+
+This project installs a BPF LSM program that denies `AF_ALG` binds where
 `salg_type == "aead"`. That blocks the known vulnerable AEAD AF_ALG interface
 while leaving normal sockets and non-AEAD AF_ALG uses available.
 
-This is a mitigation, not a kernel fix. Replace it with vendor kernel errata,
-vendor livepatch, or a real kpatch as soon as one is available for your exact
-running kernel.
+**This is not a kernel fix.** It does not patch vulnerable code in the kernel;
+it adds a policy layer that refuses the risky bind. Replace it with vendor
+kernel errata, vendor livepatch, or a maintained kpatch for your exact running
+kernel as soon as that is practical.
 
 ## Quick Start
 
@@ -35,9 +43,29 @@ alg/aead-authencesn: blocked-or-failed: PermissionError: [Errno 13] Permission d
 
 ## Requirements
 
-- A Linux kernel with BPF LSM enabled and active.
-- `bpftool`, `clang`, and `llvm` to build and load the guard.
-- `systemd` for reboot persistence.
+**Environment (must all be true for this tool to help)**
+
+- Linux hosts only — not applicable on non-Linux systems.
+- BPF LSM **enabled in the kernel config and active** at runtime (`bpf` in the
+  active LSM list). If BPF LSM is unavailable or inactive, this guard cannot
+  attach; use vendor fixes or another mitigation path instead.
+- `bpftool`, `clang`, and `llvm` available (build and load the program).
+- `systemd` for reboot persistence (service unit under `/etc/systemd`).
+
+**Where it is likely to apply**  
+Tested and expected to work on modern enterprise-style kernels (for example
+RHEL / Rocky 9–class 5.14+ builds with BPF LSM on) and on other current
+distributions that ship BPF LSM and keep it enabled — always confirm with the
+checks below on each image.
+
+**Where it does *not* apply or adds no value**
+
+- BPF LSM missing, disabled, or not in the active LSM stack.
+- Environments where vulnerable `AF_ALG` AEAD is already absent, disabled, or
+  blocked by other means — nothing further to gain here.
+- Scenarios where you need protection **from fully privileged administrators**
+  who can unload BPF, stop services, or load arbitrary kernel code — this
+  mitigation is not a boundary against root on the host.
 
 The installer supports common package managers: `dnf`, `yum`, `apt-get`,
 `zypper`, `pacman`, and `apk`.
@@ -111,8 +139,15 @@ sudo ./copyfail-bpf-guard.sh uninstall
 
 ## Notes
 
-This guard is designed for emergency reduction of exposure. It does not modify
-the vulnerable kernel code and it is not a substitute for patched kernels.
+This guard is designed for **emergency, short-lived** reduction of exposure when
+mass reboots or per-kernel livepatch/kpatch work are not the first lever you
+want to pull. It does not modify vulnerable kernel code; it is **not** a
+substitute for an official kernel fix, livepatch, or kpatch aligned to your
+build.
+
+It only helps on Linux with BPF LSM actually available and active, and only
+addresses the AEAD `AF_ALG` bind surface this program targets — not every class
+of kernel bug.
 
 Privileged users who can unload BPF programs, stop system services, or load
 their own kernel code can remove or bypass this mitigation. Treat it as a
