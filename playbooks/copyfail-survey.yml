@@ -1,0 +1,82 @@
+---
+# Read-only Copy Fail / CVE-2026-31431 survey.
+#
+# Emits one COPYFAIL_SURVEY JSON line per reachable host. This does not run an
+# exploit and does not modify the target.
+
+- name: Survey Copy Fail exposure
+  hosts: all
+  gather_facts: false
+  become: false
+  strategy: linear
+
+  tasks:
+    - name: Probe AF_ALG AEAD and live mitigation state
+      ansible.builtin.shell: |
+        python3 - <<'PYEOF'
+        import json
+        import platform
+        import socket
+        import subprocess
+
+        def sh(cmd):
+            try:
+                return subprocess.check_output(
+                    cmd,
+                    shell=True,
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                ).strip()
+            except Exception:
+                return ""
+
+        def afalg_aead():
+            try:
+                s = socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET, 0)
+                s.bind(("aead", "authencesn(hmac(sha256),cbc(aes))"))
+                s.close()
+                return "available"
+            except PermissionError:
+                return "blocked_permission"
+            except OSError as exc:
+                return "blocked_or_unavailable:%s" % getattr(exc, "errno", "unknown")
+            except Exception as exc:
+                return "error:%s" % type(exc).__name__
+
+        kpatch = sh("kpatch list 2>/dev/null")
+        livepatch = sh("ls /sys/kernel/livepatch 2>/dev/null")
+        guard = sh(
+            "systemctl is-active copyfail-afalg-guard copyfail-bpf-guard "
+            "2>/dev/null | grep -m1 active || true"
+        )
+        aead = afalg_aead()
+
+        if "31431" in kpatch or "copy" in kpatch.lower() or livepatch:
+            status = "PROTECTED"
+        elif aead != "available":
+            status = "MITIGATED"
+        else:
+            status = "VULNERABLE"
+
+        print("COPYFAIL_SURVEY " + json.dumps({
+            "host": platform.node(),
+            "kernel": platform.release(),
+            "os": sh("sed -n 's/^PRETTY_NAME=//p' /etc/os-release | tr -d '\"'"),
+            "afalg_aead": aead,
+            "guard": guard,
+            "kpatch": bool(kpatch),
+            "livepatch": bool(livepatch),
+            "status": status,
+        }, sort_keys=True))
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: copyfail_survey_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Emit Copy Fail survey result
+      ansible.builtin.debug:
+        msg: "{{ copyfail_survey_probe.stdout_lines | default([]) }}"
+      changed_when: false
