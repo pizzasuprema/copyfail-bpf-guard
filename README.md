@@ -137,29 +137,6 @@ Full removal:
 sudo ./copyfail-bpf-guard.sh uninstall
 ```
 
-## Repository Topics
-
-Suggested GitHub topics:
-
-```text
-cve-2026-31431
-copy-fail
-linux-kernel
-ebpf
-bpf-lsm
-af-alg
-algif-aead
-security
-mitigation
-linux
-```
-
-Suggested repository description:
-
-```text
-No-reboot BPF LSM mitigation for Copy Fail / CVE-2026-31431
-```
-
 ## Limitations
 
 This is a mitigation, not a kernel fix. It does not patch vulnerable code in the
